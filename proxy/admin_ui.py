@@ -138,6 +138,12 @@ tr:last-child td{border-bottom:0}
    display:flex;flex-direction:column;gap:8px;transition:border-color .15s,background .15s}
  .src-card.on{border-color:var(--accent);background:var(--accent-soft)}
  .src-card.off{opacity:.62}
+ .src-card.culled{border-style:dashed;background:#fff5f5}
+ .src-health{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+ .hdot{width:8px;height:8px;border-radius:50%;background:#c3cad3;flex:none}
+ .hdot.ok{background:#16a34a}.hdot.slow{background:#eab308}
+ .hdot.deg{background:#f59e0b}.hdot.dead{background:#dc2626}.hdot.none{background:#c3cad3}
+ .tag.red{color:#dc2626;background:#fdecec}
  .src-head{display:flex;align-items:center;gap:8px}
  .src-name{font-weight:600;font-size:13.5px;line-height:1.3;word-break:break-all;flex:1;min-width:0}
  .src-api{font-size:11px;color:var(--muted);word-break:break-all;line-height:1.35;
@@ -463,6 +469,29 @@ pre.log{max-height:240px;overflow:auto;background:#0f1115;color:#d6dae0;border-r
         </div>
         <div class="hint">「独立库」= 该站单独生成一张媒体库卡片；「非过滤」= 不按标题/备注过滤解说/预告/花絮；点卡片上的 ✎ 可改名称/订阅链接；
           删除内置源仅隐藏，可恢复。批量导入 TVBox 订阅请用左侧「导入订阅」。</div>
+        <div class="row mt" style="align-items:center;gap:14px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="autoCull" style="width:15px;height:15px;accent-color:var(--accent)" onchange="toggleAutoCull(this.checked)"/>
+            自动停用失效源（按健康画像剔除长期死亡/高失败的启用源）</label>
+          <button class="small" id="cullNowBtn" onclick="cullNow()">立即扫描剔除</button>
+          <button class="small" id="restoreCullBtn" onclick="restoreCulled()">恢复被自动停用的源</button>
+          <span class="muted sm" id="autoCullStat"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📥 批量导入资源站
+          <span class="hint" style="font-weight:400">多行或整段 JSON，每行 `名称,地址` / 仅地址；自动去重、跳过失效格式</span>
+        </div>
+        <p class="card-sub">适合一次性录入多个苹果 CMS 源。支持逐行 <code>名称,地址</code>（逗号/竖线/空格分隔，名称可省略）与整段 JSON 数组（含 <code>sites</code> 字段的 TVBox 风格亦可）。</p>
+        <label class="field"><textarea id="batchText" rows="5" placeholder="暴风资源,https://bfzyapi.com/api.php/provide/vod/at/json&#10;https://cj.ffzyapi.com/api.php/provide/vod/at/json"></textarea></label>
+        <div class="btn-row">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="batchStandalone" style="width:15px;height:15px;accent-color:var(--accent)"/>
+            同时「作为独立媒体库」</label>
+          <button class="primary small" onclick="batchImport()">解析并导入</button>
+          <span class="muted sm" id="batchMsg"></span>
+        </div>
       </div>
 
       <div class="card">
@@ -1317,16 +1346,33 @@ function renderSources(){
   $("srcGrid").innerHTML=view.map(src=>{
     let adultOpt="",extraTag="";
     const canLib=(src.enabled&&!(FEAT_DDUO&&src.xsrc));
-    const tags=(src.builtin?'':'<span class="tag amber">自定义</span>')+(src.standalone?'<span class="tag">媒体库</span>':'')+extraTag;
-    return `<div class="src-card ${src.enabled?'on':'off'}" data-id="${src.id}">
+    const culled = (STATUS && STATUS.auto_cull && STATUS.auto_cull.culled) || {};
+    const h = (STATUS && STATUS.health) ? STATUS.health[src.id] : null;
+    let healthHtml;
+    if (h && h.samples > 0) {
+      const g = h.grade;
+      const dot = g === 3 ? "dead" : g === 2 ? "deg" : g === 1 ? "slow" : "ok";
+      const gtxt = g === 3 ? "死亡" : g === 2 ? "高失败" : g === 1 ? "偏慢" : "健康";
+      healthHtml = `<span class="hdot ${dot}" title="健康等级"></span>${gtxt} · 成功${(h.success_rate * 100).toFixed(0)}% · ${h.avg_latency}s`;
+    } else {
+      healthHtml = '<span class="hdot none"></span>暂无探测';
+    }
+    const isCulled = !!culled[src.id];
+    const cullBadge = isCulled
+      ? `<span class="tag red" title="${(culled[src.id].reason || '')} · 已被自动停用">🚫 已自动停用</span>`
+      : "";
+    const tags = (src.builtin ? '' : '<span class="tag amber">自定义</span>')
+      + (src.standalone ? '<span class="tag">媒体库</span>' : '') + extraTag + cullBadge;
+    return `<div class="src-card ${src.enabled ? 'on' : 'off'} ${isCulled ? 'culled' : ''}" data-id="${src.id}">
       <div class="src-head">
-        <label class="src-switch" title="启用/停用"><input type="checkbox" class="en" ${src.enabled?"checked":""}/><span class="sl"></span></label>
+        <label class="src-switch" title="启用/停用"><input type="checkbox" class="en" ${src.enabled ? "checked" : ""}/><span class="sl"></span></label>
         <div class="src-name">${esc(src.name)}<div class="src-tags">${tags}</div></div>
       </div>
       <div class="src-api" title="${esc(src.api)}">${esc(src.api)}</div>
+      <div class="src-health">${healthHtml}</div>
       <div class="src-opts">
-        <label title="把该资源站单独生成一张媒体库卡片"><input type="checkbox" class="sa" ${src.standalone?"checked":""} ${canLib?"":"disabled"}/>独立库</label>
-        <label title="非过滤：独立库内不按标题/备注过滤解说/预告/花絮"><input type="checkbox" class="lf" ${src.loose_filter?"checked":""} ${(canLib&&src.standalone)?"":"disabled"}/>非过滤</label>
+        <label title="把该资源站单独生成一张媒体库卡片"><input type="checkbox" class="sa" ${src.standalone ? "checked" : ""} ${canLib ? "" : "disabled"}/>独立库</label>
+        <label title="非过滤：独立库内不按标题/备注过滤解说/预告/花絮"><input type="checkbox" class="lf" ${src.loose_filter ? "checked" : ""} ${(canLib && src.standalone) ? "" : "disabled"}/>非过滤</label>
         ${adultOpt}
       </div>
       <div class="src-actions">
@@ -1346,6 +1392,7 @@ function renderSources(){
     card.querySelector("[data-edit]").addEventListener("click",()=>openSrcEdit(id));
     card.querySelector("[data-del]").addEventListener("click",()=>delSource(id,srcName(id)));
   });
+  applyAutoCullUI();
 }
 function toggleSrcCollapse(){
   const bar=$("srcCollapseBar");bar.classList.toggle("collapsed");renderSources();
@@ -1857,6 +1904,49 @@ async function loadOnline(){
 
 
 /* ---------- 初始化 ---------- */
+/* ---------- 自动剔除 / 批量导入 ---------- */
+function applyAutoCullUI(){
+  const ac = STATUS && STATUS.auto_cull;
+  const cb = $("autoCull"); if (cb) cb.checked = !!(ac && ac.enabled);
+  const culled = (ac && ac.culled) || {};
+  const ids = Object.keys(culled);
+  const stat = $("autoCullStat");
+  if (stat) stat.textContent = ids.length
+    ? ("已自动停用 " + ids.length + " 个源（" + ids.map(i => culled[i].name || i).join("、") + "）")
+    : "";
+  const rb = $("restoreCullBtn"); if (rb) rb.style.display = ids.length ? "inline-block" : "none";
+}
+async function toggleAutoCull(on){
+  const r = await jpost("/v/api/ext/config", {auto_cull_dead_sources: on});
+  if (r.code === 0){ CFG.auto_cull_dead_sources = on; applyAutoCullUI();
+    toast(on ? "已开启自动停用失效源（每 10 分钟扫描一次）" : "已关闭"); }
+  else toast(r.msg || "保存失败", "fail");
+}
+async function restoreCulled(){
+  if (!confirm("恢复所有被自动停用的资源站？\n它们将重新启用并参与搜索。")) return;
+  const r = await jpost("/v/api/ext/source/restore-culled", {});
+  if (r.code === 0){ toast(r.msg || "已恢复"); await loadStatus(); renderSources(); }
+  else toast(r.msg || "失败", "fail");
+}
+async function cullNow(){
+  const r = await jpost("/v/api/ext/source/cull-now", {});
+  if (r.code === 0){ toast(r.msg || "已扫描"); await loadStatus(); renderSources(); }
+  else toast(r.msg || "失败", "fail");
+}
+async function batchImport(){
+  const t = $("batchText").value.trim();
+  if (!t){ toast("请先粘贴资源站文本或 JSON", "fail"); return; }
+  const st = $("batchMsg"); st.textContent = "导入中…";
+  const r = await jpost("/v/api/ext/source/import",
+                        {text: t, standalone: $("batchStandalone").checked});
+  if (r.code === 0){
+    const d = r.data || {};
+    st.textContent = r.msg + (d.failed && d.failed.length
+      ? (" · 失败：" + d.failed.map(f => f.api).join("、")) : "");
+    await loadStatus(); renderSources();
+  } else { st.textContent = "导入失败：" + (r.msg || ""); }
+}
+
 async function loadStatus(){
   STATUS=await jget("/v/api/ext/status");
   CFG=STATUS.config;

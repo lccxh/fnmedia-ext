@@ -35,6 +35,7 @@ import features
 import netutil
 import providers
 import sourcehealth
+import sourcecull
 import client as clientmod
 import live as livemod
 import inject as inj
@@ -579,6 +580,29 @@ async def lifespan(app: FastAPI):
     app.state.health_task = asyncio.create_task(_health_flush_loop())
 
 
+    # 自动剔除失效源（issue #55）：周期扫描健康画像，停用长期死亡/高失败的启用源。
+    # 仅在配置开启时动作；未开启则仅空转，零开销。
+    async def _cull_loop():
+        while True:
+            await asyncio.sleep(600)
+            try:
+                if not config.get().get("auto_cull_dead_sources"):
+                    continue
+                snap = await asyncio.to_thread(sourcehealth.snapshot)
+                include_deg = bool(
+                    config.get().get("auto_cull_include_degraded", True))
+                disabled = await asyncio.to_thread(
+                    sourcecull.apply, config, snap,
+                    include_degraded=include_deg)
+                if disabled:
+                    _log.info("auto-cull disabled %d dead sources: %s",
+                              len(disabled),
+                              ", ".join(d["id"] for d in disabled))
+            except Exception:
+                pass
+    app.state.cull_task = asyncio.create_task(_cull_loop())
+
+
     # 后台只读检查 GitHub 更新（仅提示，绝不自动安装）
     app.state.stop_update = asyncio.Event()
     app.state.update_task = asyncio.create_task(
@@ -596,6 +620,10 @@ async def lifespan(app: FastAPI):
             pass
         try:
             app.state.health_task.cancel()
+        except Exception:
+            pass
+        try:
+            app.state.cull_task.cancel()
         except Exception:
             pass
         try:
@@ -4848,6 +4876,11 @@ async def ext_status(request: Request):
             "config": {k: v for k, v in config.get().items() if k != "admin_token"},
             "source_priority": priorities,
             "cached_titles": len(store._titles),
+            "auto_cull": {"enabled": bool(config.get().get("auto_cull_dead_sources", False)),
+                          "include_degraded": bool(
+                              config.get().get("auto_cull_include_degraded", True)),
+                          "culled": sourcecull.load_culled()},
+            "health": sourcehealth.snapshot(),
             "hot": hot_cache.status(),
             "charts": chart_cache.status(),
             "catalog": catalog.status()}
@@ -5337,6 +5370,62 @@ async def ext_source_restore(request: Request):
     config.restore_builtin()
     _search_cache.clear()
     return {"code": 0, "msg": "restored"}
+
+
+@app.post("/v/api/ext/source/import")
+async def ext_source_import(request: Request):
+    """批量导入资源站：支持多行 `名称,地址` / `名称|地址` / 仅地址，或整段 JSON
+    （数组或含 sites 字段）。解析后逐条添加，已存在地址自动跳过。"""
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"code": 400, "msg": "请粘贴资源站文本或 JSON"},
+                            status_code=400)
+    enabled = body.get("enabled", True)
+    standalone = bool(body.get("standalone", False))
+    try:
+        result = config.add_sources_batch(text, bool(enabled), standalone)
+    except Exception as exc:
+        return JSONResponse({"code": 500, "msg": str(exc)}, status_code=500)
+    _search_cache.clear()
+    if result["added"] and standalone:
+        _schedule_routes_refresh()
+    msg = (f"新增 {len(result['added'])} · 跳过重复 {len(result['skipped'])}"
+           + (f" · 失败 {len(result['failed'])}" if result["failed"] else ""))
+    return {"code": 0, "msg": msg, "data": result}
+
+
+@app.post("/v/api/ext/source/restore-culled")
+async def ext_source_restore_culled(request: Request):
+    """一键恢复被自动剔除停用的源（入参 sid 可选，省略=全部）。"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    sid = body.get("sid")
+    n = await asyncio.to_thread(sourcecull.restore, config, sid)
+    _search_cache.clear()
+    if n:
+        _schedule_routes_refresh()
+    return {"code": 0, "msg": f"已恢复 {n} 个被自动停用的源", "data": {"restored": n}}
+
+
+@app.post("/v/api/ext/source/cull-now")
+async def ext_source_cull_now(request: Request):
+    """立即扫描一次健康画像并剔除失效源（不等待后台周期）。需先开启自动停用。"""
+    if not config.get().get("auto_cull_dead_sources"):
+        return JSONResponse({"code": 1,
+                             "msg": "请先在「资源站」页开启「自动停用失效源」"},
+                            status_code=400)
+    snap = await asyncio.to_thread(sourcehealth.snapshot)
+    include_deg = bool(config.get().get("auto_cull_include_degraded", True))
+    disabled = await asyncio.to_thread(sourcecull.apply, config, snap,
+                                       include_degraded=include_deg)
+    _search_cache.clear()
+    return {"code": 0,
+            "msg": f"本次剔除 {len(disabled)} 个失效源" + (
+                "：" + "、".join(d["name"] for d in disabled) if disabled else ""),
+            "data": {"disabled": disabled}}
 
 
 @app.post("/v/api/ext/source/test")

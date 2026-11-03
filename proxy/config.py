@@ -95,6 +95,12 @@ DEFAULTS = {
     # 自动优选（issue #4）：在源质量权重基础上，叠加实测健康度（死亡/高失败率/
     # 慢的源排后），让能连通、延迟低的源默认排到更前。默认开启；关掉则只看质量权重。
     "auto_best_source": True,
+    # 自动剔除失效源（issue #55）：开启后，后台周期扫描源健康画像，把长期处于
+    # “死亡冷却”或“高失败率”的【启用】源自动停用，避免拖慢聚合搜索与起播竞速；
+    # 停用记录在 state/auto_cull.json，管理页可一键恢复。默认关闭（不自动改用户配置）。
+    "auto_cull_dead_sources": False,
+    # 自动剔除是否一并处理“高失败率”源（grade 2）；死亡冷却(grade 3)始终处理。
+    "auto_cull_include_degraded": True,
     "admin_token": "",
     # 仅用于「拉取订阅资源」的可选 HTTP(S) 代理（订阅配置 / spider jar / DRPY 脚本）。
     # 播放、聚合搜索、CMS 探测等一律不走此代理（产品客户端保持 trust_env=False 直连）。
@@ -391,6 +397,49 @@ class Config:
             target["standalone"] = bool(on)
             self._persist(cfg)
             return True, "ok"
+
+    def set_source_enabled(self, sid: str, on: bool) -> tuple[bool, str]:
+        """启用/停用某个资源站（按 id），供手动开关与自动剔除共用。"""
+        with _LOCK:
+            cfg = self.get()
+            target = next((s for s in cfg["sources"] if s["id"] == sid), None)
+            if not target:
+                return False, "源不存在"
+            target["enabled"] = bool(on)
+            self._persist(cfg)
+            return True, "ok"
+
+    @staticmethod
+    def parse_sources_text(raw: str) -> list[dict]:
+        """解析批量导入文本，返回 [{name, api}] 列表（未做去重/存在性校验）。
+
+        支持三种形态：
+          - 逐行：`名称,地址` / `名称|地址` / `名称 地址` / 仅地址（名称取域名）；
+            行内可带成对引号/括号包裹，会自动剥离。
+          - 整段 JSON 数组：[{name, api|url}, ...]
+          - 整段 JSON 对象（TVBox 风格）：取其 `sites`/`data`/`list` 数组里的项。
+        非 http(s) 地址、空行、注释(# 开头)会被跳过。"""
+        import sourceparse
+        return sourceparse.parse_sources_text(raw)
+
+    def add_sources_batch(self, text: str, enabled: bool = True,
+                          standalone: bool = False) -> dict:
+        """批量导入资源站。返回 {added, skipped, failed}。
+
+        - added:  成功新增的源 id 列表
+        - skipped: 地址与已有源重复，未重复添加的项（保留原名）
+        - failed:  [{api, reason}] 解析后但添加失败的条目"""
+        parsed = self.parse_sources_text(text)
+        added, skipped, failed = [], [], []
+        for item in parsed:
+            ok, info = self.add_source(item["name"], item["api"], enabled, standalone)
+            if ok:
+                added.append(info)
+            elif info == "该资源站地址已存在":
+                skipped.append(item["api"])
+            else:
+                failed.append({"api": item["api"], "reason": info})
+        return {"added": added, "skipped": skipped, "failed": failed}
 
     def pinned_lib_guids(self) -> set:
         with _LOCK:

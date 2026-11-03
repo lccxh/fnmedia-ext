@@ -129,7 +129,10 @@ sudo bash deploy/install.sh
 - 标题带 **【在线】** 前缀、系列列显示「🌐在线·年份·地区」的卡片，点开即播；在线结果默认排在最前。
 - 管理页（同源）：`https://<你的飞牛地址>/v/online-admin`
   - **资源站管理**：启用/停用、添加自定义苹果 CMS JSON 接口、删除（误删可用「恢复默认」还原出厂线路）
+  - **批量导入资源站**：在「资源站」页底部粘贴多行 `名称,地址` / 仅地址，或整段 JSON（数组或含 `sites` 字段的 TVBox 风格），一键解析并导入，自动去重、跳过失效格式
+  - **自动停用失效源**：开启后后台每 10 分钟按源健康画像（来自「源健康画像」真实播放探测）把长期处于「死亡冷却」或「高失败率」的**启用**源自动停用，避免拖慢聚合搜索与起播竞速；停用记录在 `state/auto_cull.json`，可「立即扫描剔除」或「恢复被自动停用的源」，默认关闭（不自动改动你的源配置）
   - **连通性测试**：单源测试或「全部测速」，显示耗时、命中条数、直链数，方便筛掉失效源
+  - **源健康角标**：每个资源站卡片展示健康等级（健康/偏慢/高失败/死亡）、成功率与平均延迟
   - 每词注入条数、在线前排开关
   - **噪音关键词自定义**：标签式增删、批量粘贴（逗号/顿号/换行分隔）、一键恢复默认；
     标题或备注命中任一关键词即不注入
@@ -157,6 +160,9 @@ https://站点/api.php/provide/vod/at/json        # 搜索 ?ac=detail&wd=关键�
 | POST | `/v/api/ext/source/add` | `{name,api}` 添加自定义源（按地址去重）|
 | POST | `/v/api/ext/source/delete` | `{id}` 删除/隐藏一条线路（默认线路可恢复）|
 | POST | `/v/api/ext/source/restore` | 恢复全部默认线路 |
+| POST | `/v/api/ext/source/import` | `{text,standalone?}` 批量导入：多行 `名称,地址`/仅地址，或整段 JSON（数组或含 `sites`）；返回 {added,skipped,failed} |
+| POST | `/v/api/ext/source/cull-now` | 立即按健康画像剔除失效源（需先开启「自动停用失效源」）|
+| POST | `/v/api/ext/source/restore-culled` | `{sid?}` 恢复被自动停用的源（省略=全部）|
 | POST | `/v/api/ext/source/test` | `{id}` 或 `{api}` 单源连通性探测 |
 | POST | `/v/api/ext/source/test-all` | 并发探测全部源 |
 | POST | `/v/api/ext/hot/refresh` | 立即刷新豆瓣榜单缓存（失败保留旧缓存）|
