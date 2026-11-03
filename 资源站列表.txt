@@ -1,0 +1,25 @@
+# 飞牛影视扩展 · 苹果CMS资源站清单
+# 格式：名称,地址  —— 可直接整段粘贴到管理页「📥 批量导入资源站」
+# 来源：2026 年社区公开列表（飞牛论坛 / GitHub LunaTV-config / 量子资源汇总），已剔除失效域名与成人源
+# 注意：资源站接口失效快，导入后请用「全部测速」验证存活；少数站接口路径非标准，搜索无结果可尝试地址后补 /at/json
+
+量子资源,http://cj.lziapi.com/api.php/provide/vod/
+非凡资源,http://cj.ffzyapi.com/api.php/provide/vod/
+暴风资源,https://bfzyapi.com/api.php/provide/vod/
+光速资源,https://api.guangsuapi.com/api.php/provide/vod/
+快车资源,https://caiji.kczyapi.com/api.php/provide/vod/
+天空资源,http://m3u8.tiankongapi.com/api.php/provide/vod/
+红牛资源,https://www.hongniuzy2.com/api.php/provide/vod/
+索尼资源,https://suoniapi.com/api.php/provide/vod
+茅台资源,https://caiji.maotaizy.cc/api.php/provide/vod
+虎牙资源,https://www.huyaapi.com/api.php/provide/vod/
+豪华资源,https://hhzyapi.com/api.php/provide/vod
+量子影视,https://cj.lzcaiji.com/api.php/provide/vod
+金鹰资源,https://jyzyapi.com/provide/vod/from/jinyingyun/at/json
+闪电资源,https://xsd.sdzyapi.com/api.php/provide/vod
+飘零资源,https://p2100.net/api.php/provide/vod
+魔都资源,https://www.mdzyapi.com/api.php/provide/vod
+魔都动漫,https://caiji.moduapi.cc/api.php/provide/vod
+鸭鸭资源,https://cj.yayazy.net/api.php/provide/vod
+360资源,https://360zy.com/api.php/provide/vod
+猫眼资源,https://api.maoyanapi.top/api.php/provide/vod
